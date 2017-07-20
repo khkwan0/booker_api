@@ -1,0 +1,5 @@
+config.js
+public/
+*.swp
+node_modules/
+package-lock.json
