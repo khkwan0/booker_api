@@ -54,6 +54,7 @@ router.post('/login', (req, res, next) => {
         if (result) {
           rv.user = result;
           req.session.user = result;
+          console.log(req.session.user);
         }
         res.status(200).send(JSON.stringify(rv));
       })
@@ -112,6 +113,7 @@ router.post('/register', (req, res, next) => {
           ok: 1,
           user: {
             email: req.body.email,
+            _id: result._id,
           }
         }
         req.session.user = {
@@ -148,6 +150,7 @@ router.post('/savevenue', (req, res, next) => {
     ok: 0
   };
   if (toSave && req.session.user) {
+    toSave.user_id = req.session.user._id.toString();
     if (toSave.orig) {
       let dst_dir = __dirname + '/../public/assets/images/venue/';
       let nameParts = toSave.orig.split('.');
@@ -177,13 +180,17 @@ router.post('/savevenue', (req, res, next) => {
             console.log(e);
           }
         });
-        toSave.image = baseName + '_resize' + ext;
-        toSave.th = baseName + '_th' + ext;
-        toSave.image = baseName + ext;
+        toSave.orig = [];
+        toSave.image = [];
+        toSave.ts = [];
+        toSave.image.push(baseName + '_resize' + ext);
+        toSave.th.push(baseName + '_th' + ext)
+        toSave.orig.push(baseName + ext);
       }
     }
     Venues = req.db.collection('venues');
     toSave.ts = new Date();
+    toSave.verified = false;
     Venues.insert(toSave)
     .then((result) => {
       if (result._id) {
@@ -197,6 +204,28 @@ router.post('/savevenue', (req, res, next) => {
     });
   } else {
     res.status(403).send(JSON.stringify(rv));
+  }
+});
+
+router.get('/getvenues', (req, res, next) => {
+  if (req.session.user) {
+    let Venues = req.db.collection('venues');
+    Venues.find({user_id: req.session.user._id.toString()})
+    .then((result) => {
+      let rv = {
+        venues: []
+      }
+      if (result) {
+        rv.venues = result;
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.status(500).send(JSON.stringify({err: err.stack}));
+    });
+  } else {
+    res.status(404).send();
   }
 });
 
