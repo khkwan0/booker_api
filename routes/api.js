@@ -52,11 +52,24 @@ router.post('/login', (req, res, next) => {
       Users.findOne({email:req.body.email, password: req.body.pw}, '-password')
       .then((result) => {
         if (result) {
-          rv.user = result;
-          req.session.user = result;
-          console.log(req.session.user);
+          let Venues = req.db.collection('venues');
+          Venues.findOne({user_id: result._id.toString()})
+          .then((result2) => {
+            if (result2) {
+              result.hasVenue = true;
+            } else {
+              result.hasVenue = false;
+            }
+            rv.user = result;
+            req.session.user = result;
+            res.status(200).send(JSON.stringify(rv));
+          })
+          .catch((err) => {
+            console.log(err.stack);
+          });
+        } else {
+          res.status(200).send(JSON.stringify(rv));
         }
-        res.status(200).send(JSON.stringify(rv));
       })
       .catch((err) => {
         console.log(err.stack);
@@ -105,20 +118,22 @@ router.get('/checkemail', (req, res, next) => {
 
 router.post('/register', (req, res, next) => {
   if (req.body.email && req.body.pw) {
+    toSave = {
+      email: req.body.email,
+      password: req.body.pw,
+      ts: new Date(),
+      verified: false
+    };
     let Users = req.db.collection('users');
-    Users.insert({email: req.body.email, password: req.body.pw, ts: new Date(), verified: 0})
+    Users.insert(toSave)
     .then((result) => {
       if (result._id) {
+        toSave.password = null;
         let rv = {
           ok: 1,
-          user: {
-            email: req.body.email,
-            _id: result._id,
-          }
+          user: toSave
         }
-        req.session.user = {
-          email: req.body.email
-        }
+        req.session.user = toSave;
         res.status(200).send(JSON.stringify(rv));
       } else {
         let rv = {
@@ -195,6 +210,7 @@ router.post('/savevenue', (req, res, next) => {
     .then((result) => {
       if (result._id) {
         rv.ok = 1;
+        req.session.user.hasVenue = true;
       }
       res.status(200).send(JSON.stringify(rv));
     })
