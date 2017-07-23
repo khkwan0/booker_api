@@ -60,9 +60,21 @@ router.post('/login', (req, res, next) => {
             } else {
               result.hasVenue = false;
             }
-            rv.user = result;
-            req.session.user = result;
-            res.status(200).send(JSON.stringify(rv));
+            let Artists = req.db.collection('artists');
+            Artists.findOne({user_id: result._id.toString()})
+            .then((result3) => {
+              if (result3) {
+                result.hasArtist = true;
+              } else {
+                result.hasArtist = false;
+              }
+              rv.user = result;
+              req.session.user = result;
+              res.status(200).send(JSON.stringify(rv));
+            })
+            .catch((err) => {
+              console.log(err.stack);
+            });
           })
           .catch((err) => {
             console.log(err.stack);
@@ -223,6 +235,92 @@ router.post('/savevenue', (req, res, next) => {
   }
 });
 
+router.post('/saveartist', (req, res, next) => {
+  let toSave = req.body;
+  let rv = {
+    ok: 0
+  };
+  if (toSave && req.session.user) {
+    toSave.user_id = req.session.user._id.toString();
+    if (toSave.orig) {
+      let dst_dir = __dirname + '/../public/assets/images/venue/';
+      let nameParts = toSave.orig.split('.');
+      let baseName = '';
+      let ext = '';
+      if (nameParts.length === 1) {
+        baseName = toSave.orig;
+      } else {
+        for (i=0; i<nameParts.length-1; i++) {
+          baseName += nameParts[i];
+        }
+        ext = '.' + nameParts[nameParts.length-1];
+      }
+      if (baseName) {
+        fs.rename(__dirname + '/../public' + toSave.image, dst_dir + baseName + '_resize' + ext, (e) => {
+          if (e) {
+            console.log(e);
+          }
+        });
+        fs.rename(__dirname + '/../public' + toSave.th, dst_dir + baseName + '_th' + ext, (e) => { 
+          if (e) {
+            console.log(e);
+          }
+        });
+        fs.rename(__dirname + '/../public/assets/tmp/' + toSave.orig, dst_dir + baseName + ext, (e) => { 
+          if (e) {
+            console.log(e);
+          }
+        });
+        toSave.orig = [];
+        toSave.image = [];
+        toSave.ts = [];
+        toSave.image.push(baseName + '_resize' + ext);
+        toSave.th.push(baseName + '_th' + ext)
+        toSave.orig.push(baseName + ext);
+      }
+    }
+    Artists = req.db.collection('artists');
+    toSave.ts = new Date();
+    toSave.verified = false;
+    Artists.insert(toSave)
+    .then((result) => {
+      if (result._id) {
+        rv.ok = 1;
+        req.session.user.hasArtist = true;
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack)
+      res.status(200).send(JSON.stringify(rv));
+    });
+  } else {
+    res.status(403).send(JSON.stringify(rv));
+  }
+});
+
+router.get('/getartists', (req, res, next) => {
+  if (req.session.user) {
+    let Artists = req.db.collection('artists');
+    Artists.find({user_id: req.session.user._id.toString()})
+    .then((result) => {
+      let rv = {
+        artists: []
+      }
+      if (result) {
+        rv.artists = result;
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.status(500).send(JSON.stringify({err: err.stack}));
+    });
+  } else {
+    res.status(404).send();
+  }
+});
+
 router.get('/getvenues', (req, res, next) => {
   if (req.session.user) {
     let Venues = req.db.collection('venues');
@@ -245,4 +343,52 @@ router.get('/getvenues', (req, res, next) => {
   }
 });
 
+router.post('/saveavail', (req, res, next) => {
+    console.log(req.body);
+  if (req.session.user && typeof req.body.blackout !== 'undefined' && typeof req.body.avail !== 'undefined' && req.body.refid) {
+    let toSave = {
+      ref_id: req.body.refid,
+      blackout: req.body.blackout,
+      available: req.body.avail
+    }
+    let Avail = req.db.collection('avail');
+    Avail.update({ref_id: req.body.refid}, toSave, { upsert: true})
+    .then((result) => {
+      let rv = {
+        ok: 1,
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.status(500).send(JSON.stringify({msg: err.stack}));
+    });
+  } else {
+    res.status(403).send();
+  }
+});
+
+router.get('/getavail', (req, res, next) => {
+  if (req.session.user && req.query.refid) {
+    let Avail = req.db.collection('avail');
+    Avail.findOne({ref_id: req.query.refid})
+    .then((result) => {
+      let rv = {
+        blackout: [],
+        available: []
+      };
+      if (result) {
+        rv.blackout = result.blackout,
+        rv.available = result.available
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.send(500).send(JSON.stringify({msg: err.stack}));
+    });
+  } else {
+    res.status(404).send();
+  }
+});
 module.exports = router;
