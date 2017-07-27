@@ -4,6 +4,8 @@ var favicon = require('serve-favicon');
 var logger = require('morgan');
 var cookieParser = require('cookie-parser');
 var bodyParser = require('express-busboy');
+var https = require('https');
+var fs = require('fs');
 
 var monk = require('monk');
 var session = require('express-session');
@@ -12,6 +14,12 @@ var api = require('./routes/api');
 var config = require('./config.js');
 
 var app = express();
+var options = {
+  key: fs.readFileSync('./public/certs/key.pem'),
+  cert: fs.readFileSync('./public/certs/cert.pem')
+};
+var server = https.createServer(options, app);
+let serverPort = 3001;
 
 var db = monk(config.mongo.host+':'+config.mongo.port+'/'+config.mongo.db);
 // view engine setup
@@ -29,7 +37,7 @@ bodyParser.extend(app, {
 //app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
 app.use(logger('dev'));
 app.use(function(req, res, next) {
- res.setHeader('Access-Control-Allow-Origin', ['http://23.239.1.81:3001']);
+ res.setHeader('Access-Control-Allow-Origin', ['https://23.239.1.81:3000']);
 // res.setHeader('Access-Control-Allow-Origin', 'http://23.239.1.81:5000');
  res.setHeader('Access-Control-Allow-Credentials', 'true');
  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -75,5 +83,13 @@ app.use(function(err, req, res, next) {
   console.log(err.stack);
   res.status(err.status || 500).send();
 });
+
+server.listen(serverPort, (err) => {
+  if (err) {
+    console.log(err.stack);
+  } else {
+    console.log('secure server up');
+  }
+}); 
 
 module.exports = app;

@@ -299,6 +299,32 @@ router.post('/saveartist', (req, res, next) => {
   }
 });
 
+router.post('/savefan', (req, res, next) => {
+  let toSave = req.body;
+  let rv = {
+    ok: 0
+  };
+  if (req.session.user && toSave) {
+    Fans = req.db.collection('fans');
+    toSave.ts = new Date;
+    toSave.user_id = req.session.user._id.toString();
+    Fans.update({user_id: req.session.user._id.toString()}, toSave, {upsert: true})
+    .then((result) => {
+      if (result.n) {
+        rv.ok = 1;
+        req.session.user.hasFan = true;
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+      console.log(err.stack)
+      res.status(200).send(JSON.stringify(rv));
+    });
+  } else {
+    res.status(403).send();
+  }
+})
+
 router.get('/getartists', (req, res, next) => {
   if (req.session.user) {
     let Artists = req.db.collection('artists');
@@ -385,10 +411,57 @@ router.get('/getavail', (req, res, next) => {
     })
     .catch((err) => {
       console.log(err.stack);
-      res.send(500).send(JSON.stringify({msg: err.stack}));
+      res.status(500).send(JSON.stringify({msg: err.stack}));
     });
   } else {
     res.status(404).send();
   }
 });
+
+router.get('/rgl', (req, res, next) => {
+  if (req.query.lat && req.query.lon) {
+    Zips = req.db.collection('zips');
+    let lat = parseFloat(req.query.lat);
+    let lon = parseFloat(req.query.lon);
+    Zips.findOne({location: {$nearSphere: { $geometry: { type:"Point", coordinates: [lon, lat]}}}})
+    .then((result) => {
+      if (result) {
+        res.status(200).send(JSON.stringify({ok: 1, msg: result}));
+      } else {
+        res.status(200).send(JSON.stringify({ok: 0, msg: 'nonefound'}));
+      }
+    })
+    .catch((err) => {
+      console.log(err.stack);
+    });
+  } else {
+    res.status(404).send();
+  }
+});
+
+router.get('/getfan', (req, res, next) => {
+  if (req.session.user && req.session.user.hasFan) {
+    Fans = req.db.collection('fans');
+    Fans.findOne({user_id: req.session.user._id.toString()})
+    .then((result) => {
+      let toSend = {
+        found: 0,
+        zip: '00000',
+        radius: 0
+      }
+      if (result._id) {
+        toSend.found = 1;
+        toSend.zip = result.zip;
+        toSend.radius = result.radius
+      }
+      res.status(200).send(JSON.stringify(toSend));
+    })
+    .catch((err) => {
+      res.status(200).send(JSONStringify({msg: err.stack}));
+    })
+  } else {
+    res.status(404).send();
+  }
+});
+
 module.exports = router;
