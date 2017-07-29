@@ -3,6 +3,7 @@ var router = express.Router();
 var ObjectId = require('mongodb').ObjectID;
 var fs = require('fs');
 var gm = require('gm');
+var parser = require('parse-address');
 
 /* GET home page. */
 router.post('/imageupload', (req, res, next)  => {
@@ -68,9 +69,18 @@ router.post('/login', (req, res, next) => {
               } else {
                 result.hasArtist = false;
               }
-              rv.user = result;
-              req.session.user = result;
-              res.status(200).send(JSON.stringify(rv));
+              let Fans = req.db.collection('fans');
+              Fans.findOne({user_id: result._id.toString()})
+              .then((result4) => {
+                if (result4) {
+                  result.hasFan = true;
+                } else {
+                  result.hasFan = false;
+                }
+                rv.user = result;
+                req.session.user = result;
+                res.status(200).send(JSON.stringify(rv));
+              })
             })
             .catch((err) => {
               console.log(err.stack);
@@ -171,6 +181,38 @@ router.post('/register', (req, res, next) => {
   }
 });
 
+router.get('/getlonglat', (req, res, next) => {
+  if (req.query.st && req.query.nm && req.query.zip) {
+    console.log(req.query);
+    let GeoDB = req.geodb.collection('usa.ca');
+    GeoDB.findOne({
+      number: req.query.nm,
+      postcode: req.query.zip,
+      $text: {
+        $search: req.query.st
+      }
+    })
+    .then((result) => {
+      if (result) {
+        console.log(result);
+        let rv = {
+          lng: result.location.coordinates[0],
+          lat: result.location.coordinates[1]
+        }
+        res.status(200).send(JSON.stringify(rv));
+      } else {
+        res.status(403).send();
+      }
+    })
+    .catch((err) => {
+      console.log(err);
+      res.status(500).send();
+    });
+  } else {
+    res.status(404).send();
+  }
+});
+
 router.post('/savevenue', (req, res, next) => {
   let toSave = req.body;
   let rv = {
@@ -215,9 +257,22 @@ router.post('/savevenue', (req, res, next) => {
         toSave.orig.push(baseName + ext);
       }
     }
-    Venues = req.db.collection('venues');
     toSave.ts = new Date();
     toSave.verified = false;
+    if (req.body.parsed.number && req.body.parsed.street) {
+      let Geo = req.geodb.collection('usa.ca');
+      Geo.find({number: req.body.parsed.number, $text: {$search: req.body.parsed.street}, zip: req.body.zip})
+      .then((result) => {
+        if (result) {
+          res.status(200).send(JSON.Stringify(result));
+        }
+      })
+      .catch((err) => {
+        console.log(err.stack);
+      })
+    }
+
+    Venues = req.db.collection('venues');
     Venues.insert(toSave)
     .then((result) => {
       if (result._id) {
@@ -299,26 +354,67 @@ router.post('/saveartist', (req, res, next) => {
   }
 });
 
+const getCoordsByZip = (db, zip) => {
+  return new Promise((resolve, reject) => {
+    let Zips = db.collection('zips');
+    Zips.findOne({zip: zip})
+    .then((result) => {
+      resolve(result.location);
+    })
+    .catch((err) => {
+      reject(err);
+    })
+  })
+}
+
+const getNearestVenues = (db, location, radius) => {
+  return new Promise((resolve, reject) => {
+    Venues = db.collection('venues');
+    Venues.find({
+      location: {
+        $nearSphere: {
+          $geometry: location,
+          $maxDistance: 1609.34 * radius
+        }
+      }
+    })
+    .then((result) => {
+      resolve(result);
+    })
+    .catch((err) => {
+      reject(err);
+    });
+  })
+}
+
 router.post('/savefan', (req, res, next) => {
   let toSave = req.body;
   let rv = {
     ok: 0
   };
-  if (req.session.user && toSave) {
+  if (req.session.user && toSave && toSave.zip) {
     Fans = req.db.collection('fans');
     toSave.ts = new Date;
     toSave.user_id = req.session.user._id.toString();
-    Fans.update({user_id: req.session.user._id.toString()}, toSave, {upsert: true})
-    .then((result) => {
-      if (result.n) {
-        rv.ok = 1;
-        req.session.user.hasFan = true;
-      }
-      res.status(200).send(JSON.stringify(rv));
+    getCoordsByZip(req.db,toSave.zip)
+    .then((location) => {
+      toSave.location = location;
+      Fans.update({user_id: req.session.user._id.toString()}, toSave, {upsert: true})
+      .then((result) => {
+        if (result.n) {
+          rv.ok = 1;
+          req.session.user.hasFan = true;
+        }
+        res.status(200).send(JSON.stringify(rv));
+      })
+      .catch((err) => {
+        console.log(err.stack)
+        res.status(200).send(JSON.stringify(rv));
+      });
     })
     .catch((err) => {
-      console.log(err.stack)
-      res.status(200).send(JSON.stringify(rv));
+      console.log(err.stack);
+      res.status(500).send();
     });
   } else {
     res.status(403).send();
@@ -454,7 +550,19 @@ router.get('/getfan', (req, res, next) => {
         toSend.zip = result.zip;
         toSend.radius = result.radius
       }
-      res.status(200).send(JSON.stringify(toSend));
+      if (result.location) {
+        getNearestVenues(req.db, result.location, result.radius)
+        .then((result) => {
+          toSend.venues = result;
+          res.status(200).send(JSON.stringify(toSend));
+        })
+        .catch((err) => {
+          console.log(err);
+          res.status(500).send();
+        });
+      } else {
+        res.status(200).send(JSON.stringify(toSend));
+      }
     })
     .catch((err) => {
       res.status(200).send(JSONStringify({msg: err.stack}));
@@ -463,5 +571,35 @@ router.get('/getfan', (req, res, next) => {
     res.status(404).send();
   }
 });
+
+router.get('/searchartists', (req, res, next) => {
+  if (req.query.artist) {
+    let Artists = req.artistsdb.collection('artists');
+    let pipeline = [
+      {
+        "$match": {
+          "$text": {
+            "$search": '"'+req.query.artist+'"'
+          }
+        }
+      },
+      {
+        "$sort": { "score" : { "$meta": "textScore" }}
+      },
+      {
+        "$limit": 20
+      }
+    ];
+    Artists.aggregate(pipeline)
+    .then((result) => {
+      res.status(200).send(JSON.stringify(result));
+    })
+    .catch((err) => {
+    });
+  } else {
+    res.status(404).send()
+  }
+
+})
 
 module.exports = router;

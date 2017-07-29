@@ -19,9 +19,11 @@ var options = {
   cert: fs.readFileSync('./public/certs/cert.pem')
 };
 var server = https.createServer(options, app);
-let serverPort = 3001;
+var serverPort = 3001;
 
 var db = monk(config.mongo.host+':'+config.mongo.port+'/'+config.mongo.db);
+var geodb = monk(config.mongo.host+':'+config.mongo.port+'/'+config.mongo.geodb);
+var artistsdb = monk(config.mongo.host+':'+config.mongo.port+'/'+config.mongo.artistsdb);
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'nunjucks');
@@ -60,6 +62,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use((req, res, next) => {
   req.db = db;
+  req.geodb = geodb;
+  req.artistsdb = artistsdb;
   next();
 });
 
