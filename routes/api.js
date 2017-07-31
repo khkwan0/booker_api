@@ -117,6 +117,27 @@ router.get('/checksession', (req, res, next) => {
     res.status(200).send(JSON.stringify(rv));
 });
 
+router.get('/checkuname', (req, res, next) => {
+  let uname = req.query.uname;
+  if (uname) {
+    let rv = {ok:1};
+    let Users = req.db.collection('users');
+    Users.findOne({uname: uname})
+    .then((result) => {
+      if (result) {
+        rv.ok = 0;
+      }
+      res.status(200).send(JSON.stringify(rv));
+    })
+    .catch((err) => {
+        console.log(err.stack);
+        res.status(500).send(err);
+    });
+  } else {
+    res.status(403).send();
+  }
+});
+
 router.get('/checkemail', (req, res, next) => {
   let email = req.query.email;
   if (email) {
@@ -139,8 +160,9 @@ router.get('/checkemail', (req, res, next) => {
 });
 
 router.post('/register', (req, res, next) => {
-  if (req.body.email && req.body.pw) {
+  if (req.body.email && req.body.pw && req.body.uname) {
     toSave = {
+      uname: req.body.uname,
       email: req.body.email,
       password: req.body.pw,
       ts: new Date(),
@@ -167,17 +189,10 @@ router.post('/register', (req, res, next) => {
     })
     .catch((err) => {
       console.log(err.stack);
-      let rv = {
-        ok: 0,
-        msg: err.stack
-      }
-      res.status(403).send(JSON.stringify(rv));
+      res.status(500).send();
     });
   } else {
-    let rv = {
-      'ok': 0
-    }
-    res.status(200).send(JSON.stringify(rv));
+    res.status(403).send();
   }
 });
 
@@ -393,17 +408,18 @@ router.post('/savefan', (req, res, next) => {
     ok: 0
   };
   if (req.session.user && toSave && toSave.zip) {
-    Fans = req.db.collection('fans');
+    Users = req.db.collection('users');
     toSave.ts = new Date;
-    toSave.user_id = req.session.user._id.toString();
     getCoordsByZip(req.db,toSave.zip)
     .then((location) => {
       toSave.location = location;
-      Fans.update({user_id: req.session.user._id.toString()}, toSave, {upsert: true})
+      Users.update({_id: req.session.user._id}, {$set: {fan:toSave}}, {upsert: true})
       .then((result) => {
         if (result.n) {
           rv.ok = 1;
           req.session.user.hasFan = true;
+          req.session.user.fan = toSave;
+          rv.res = toSave;
         }
         res.status(200).send(JSON.stringify(rv));
       })
@@ -535,23 +551,15 @@ router.get('/rgl', (req, res, next) => {
   }
 });
 
-router.get('/getfan', (req, res, next) => {
+router.get('/getnearestvenues', (req, res, next) => {
   if (req.session.user && req.session.user.hasFan) {
-    Fans = req.db.collection('fans');
-    Fans.findOne({user_id: req.session.user._id.toString()})
-    .then((result) => {
       let toSend = {
         found: 0,
-        zip: '00000',
-        radius: 0
+        zip: req.session.user.fan.zip,
+        radius: req.session.user.fan.radius
       }
-      if (result._id) {
-        toSend.found = 1;
-        toSend.zip = result.zip;
-        toSend.radius = result.radius
-      }
-      if (result.location) {
-        getNearestVenues(req.db, result.location, result.radius)
+      if (req.session.user.fan.location && req.session.user.fan.radius) {
+        getNearestVenues(req.db, req.session.user.fan.location, req.session.user.fan.radius)
         .then((result) => {
           toSend.venues = result;
           res.status(200).send(JSON.stringify(toSend));
@@ -561,12 +569,8 @@ router.get('/getfan', (req, res, next) => {
           res.status(500).send();
         });
       } else {
-        res.status(200).send(JSON.stringify(toSend));
+        res.status(403).send();
       }
-    })
-    .catch((err) => {
-      res.status(200).send(JSONStringify({msg: err.stack}));
-    })
   } else {
     res.status(404).send();
   }
@@ -600,6 +604,51 @@ router.get('/searchartists', (req, res, next) => {
     res.status(404).send()
   }
 
+})
+
+router.post('/want', (req, res, next) => {
+  if (req.body.artist) {
+    Wants = req.db.collection('wants');
+    let toSave = {
+      artist_id: req.body.artist._id.toString(),
+      user_id: req.session.user,
+      active: 1,
+      ts: new Date()
+    }
+    Wants.update({user_id: req.session.user._id.toString(), artist_id: req.body.artist._id.toString()}, toSave, { upsert: true})
+    .then((result) => {
+      res.status(200).send(JSON.stringify(result));
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.status(500).send();
+    });
+  } else {
+    res.status(404).send();
+  }
+})
+
+router.get('/getwants', (req, res, next) => {
+  if (req.body.artist_id && typeof req.session.user.fan !== 'undefined') {
+    Wants = req.db.collection('wants');
+    Wants.find(
+      {
+        artist_id: req.body.artist_id,
+        $nearSphere: {
+          type: "Point",
+          coordinates: req.session.user.fan.location.coordinates
+        }
+      }
+    )
+    .then((result) => {
+    })
+    .catch((err) => {
+      console.log(err.stack);
+      res.status(500).send();
+    });
+  } else {
+    res.status(403).send();
+  }
 })
 
 module.exports = router;
