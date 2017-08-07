@@ -4,6 +4,7 @@ var ObjectId = require('mongodb').ObjectID;
 var fs = require('fs');
 var gm = require('gm');
 var parser = require('parse-address');
+var geocluster = require('geocluster');
 
 /* GET home page. */
 router.post('/imageupload', (req, res, next)  => {
@@ -274,16 +275,18 @@ router.post('/savevenue', (req, res, next) => {
     }
     toSave.ts = new Date();
     toSave.verified = false;
+    toSave.cap = parseInt(toSave.cap);
     if (req.body.parsed.number && req.body.parsed.street) {
       let Geo = req.geodb.collection('usa.ca');
       Geo.find({number: req.body.parsed.number, $text: {$search: req.body.parsed.street}, zip: req.body.zip})
       .then((result) => {
         if (result) {
-          res.status(200).send(JSON.Stringify(result));
+          res.status(200).send(JSON.stringify(result));
         }
       })
       .catch((err) => {
         console.log(err.stack);
+        res.status(500).send();
       })
     }
 
@@ -395,6 +398,40 @@ const getNearestVenues = (db, location, radius) => {
     })
     .then((result) => {
       resolve(result);
+    })
+    .catch((err) => {
+      reject(err);
+    });
+  })
+}
+
+const getAllWantsCoordsByArtist = (db, artist_id) => {
+  return new Promise((resolve, reject) => {
+    let Wants = db.collection('wants');
+    Wants.find({'artist._id': new ObjectId(artist_id)})
+    .then((result) => {
+      let coords = [];
+      result.map((want) => {
+        coords.push([want.user.fan.location.coordinates[1], want.user.fan.location.coordinates[0]]);
+      })
+      resolve(coords);
+    })
+    .catch((err) => {
+      reject(err);
+    })
+  })
+}
+
+const getClusters = (db, artist_id) => {
+  return new Promise((resolve, reject) => {
+    getAllWantsCoordsByArtist(db, artist_id)
+    .then((result) => {
+      let coords = result;
+      console.log(coords);
+      let clusters = geocluster(coords,1.5);
+      console.log(clusters);
+      resolve(clusters);
+
     })
     .catch((err) => {
       reject(err);
@@ -609,13 +646,14 @@ router.get('/searchartists', (req, res, next) => {
 router.post('/want', (req, res, next) => {
   if (req.body.artist) {
     Wants = req.db.collection('wants');
+    delete req.body.artist.images.image['$'];
     let toSave = {
-      artist_id: req.body.artist._id.toString(),
-      user_id: req.session.user,
+      artist: req.body.artist,
+      user: req.session.user,
       active: 1,
       ts: new Date()
     }
-    Wants.update({user_id: req.session.user._id.toString(), artist_id: req.body.artist._id.toString()}, toSave, { upsert: true})
+    Wants.update({'user._id': new ObjectId(req.session.user._id), 'artist._id': new ObjectId(req.body.artist._id)}, toSave, { upsert: true})
     .then((result) => {
       res.status(200).send(JSON.stringify(result));
     })
@@ -628,19 +666,66 @@ router.post('/want', (req, res, next) => {
   }
 })
 
-router.get('/getwants', (req, res, next) => {
-  if (req.body.artist_id && typeof req.session.user.fan !== 'undefined') {
-    Wants = req.db.collection('wants');
+const getWants = (db, user_id) => {
+  return new Promise((resolve, reject) => {
+    let Wants = db.collection('wants');
     Wants.find(
       {
-        artist_id: req.body.artist_id,
-        $nearSphere: {
-          type: "Point",
-          coordinates: req.session.user.fan.location.coordinates
+        'user._id': user_id
+      }
+    )
+    .then((result) => {
+      resolve(result);
+    })
+    .catch((err) => {
+      reject(err);
+    })
+  })
+}
+
+const getNearbyWants = (db, artist_id, fan, idx) => {
+  return new Promise((resolve, reject) => {
+    let Wants = db.collection('wants');
+    Wants.find(
+      {
+        'artist._id': new ObjectId(artist_id),
+        'user.fan.location': {
+          $nearSphere: {
+            $geometry: fan.location,
+            $maxDistance: fan.radius * 2 * 1609.34
+          }
         }
       }
     )
     .then((result) => {
+      result.idx = idx;
+      resolve(result);
+    })
+    .catch((err) => {
+      reject(err);
+    })
+  })
+}
+
+router.get('/getwants', (req, res, next) => {
+  if (typeof req.session.user.fan !== 'undefined') {
+    getWants(req.db, req.session.user._id)
+    .then((result) => {
+      let i=0;
+      result.map((want, idx) => {
+        getClusters(req.db, want.artist._id)
+        .then((clusters) => {
+          result[idx].clusters = clusters;
+          i++;
+          if (i === result.length) {
+            res.status(200).send(JSON.stringify(result));
+          }
+        })
+        .catch((err) => {
+          console.log(err.stack);
+          res.status(500).send();
+        })
+      })
     })
     .catch((err) => {
       console.log(err.stack);
